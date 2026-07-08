@@ -1,0 +1,97 @@
+{
+  "url": "http://blog.rei.com/camp/how-to-introduce-your-indoorsy-friend-to-the-outdoors/",
+  "final_url": "https://www.rei.com/blog/camp/how-to-introduce-your-indoorsy-friend-to-the-outdoors/",
+  "status_code": 200,
+  "title": "How to Introduce Your Indoorsy Friend to the Outdoors - Uncommon Path – An REI Co-op Publication",
+  "description": "Share your passion for the outdoors and introduce a friend to hike and camp--don't forget to start slow.",
+  "canonical_url": "https://www.rei.com/blog/camp/how-to-introduce-your-indoorsy-friend-to-the-outdoors",
+  "language": "en-US",
+  "page_type": "article",
+  "topics": [
+    {
+      "topic": "friend",
+      "score": 1.0,
+      "evidence": [
+        "body",
+        "description",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "introduce",
+      "score": 0.625,
+      "evidence": [
+        "body",
+        "description",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "outdoors",
+      "score": 0.625,
+      "evidence": [
+        "body",
+        "description",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "indoorsy",
+      "score": 0.5,
+      "evidence": [
+        "body",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "introduce indoorsy",
+      "score": 0.5,
+      "evidence": [
+        "body",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "indoorsy friend",
+      "score": 0.5,
+      "evidence": [
+        "body",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "friend outdoors",
+      "score": 0.4583,
+      "evidence": [
+        "body",
+        "h1",
+        "title"
+      ]
+    },
+    {
+      "topic": "outdoors an",
+      "score": 0.25,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    }
+  ],
+  "headings": {
+    "h1": [
+      "How to Introduce Your Indoorsy Friend to the Outdoors"
+    ],
+    "h2": [],
+    "h3": []
+  },
+  "body_excerpt": "How to Introduce Your Indoorsy Friend to the Outdoors - Uncommon Path – An REI Co-op Publication REI Accessibility Statement Skip to main content Skip to REI Uncommon Path categories Uncommon Path My REI Find your store Home / Camp How to Introduce Your Indoorsy Friend to the Outdoors Jennifer Davis-Flynn | May 4, 2015 A campfire, toasted s’mores and great conversation on a summer night under the stars might sound like an ideal way to hang with your friends—until you realize that you don’t have a single pal who would join you for a day hike, let alone an overnight in the woods. Camper, we have a problem. Here are some ways to introduce your “indoorsy” friend to the great outdoors and remain best buds. Extend an Invitation Sometimes it’s as easy as calling up a friend and saying “Let’s go on a short hike this weekend.” Tell him or her why you think they might enjoy the scenery, fresh air, and time away from the laptop and smartphone. If you encounter reluctance, lead with an offer to do",
+  "content_hash": "356aa0957bb7d06547ba6753d9610458ae9e355cd7839e94f5c79a2e101b3f2b",
+  "fetched_at": "2026-07-08T19:46:56.513020Z",
+  "content_type": "text/html; charset=UTF-8"
+}

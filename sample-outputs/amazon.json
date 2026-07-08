@@ -1,0 +1,78 @@
+{
+  "url": "http://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C/ref=sr_1_1?s=kitchen&ie=UTF8&qid=1431620315&sr=1-1&keywords=toaster",
+  "final_url": "https://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C/ref=sr_1_1?s=kitchen&ie=UTF8&qid=1431620315&sr=1-1&keywords=toaster",
+  "status_code": 200,
+  "title": "Amazon.com",
+  "description": null,
+  "canonical_url": null,
+  "language": "en-us",
+  "page_type": "product",
+  "topics": [
+    {
+      "topic": "com",
+      "score": 1.0,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    },
+    {
+      "topic": "click",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "button",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "below",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "continue",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "shopping",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "conditions",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    },
+    {
+      "topic": "privacy",
+      "score": 0.1429,
+      "evidence": [
+        "body"
+      ]
+    }
+  ],
+  "headings": {
+    "h1": [],
+    "h2": [],
+    "h3": []
+  },
+  "body_excerpt": "Amazon.com Click the button below to continue shopping Conditions of Use Privacy Policy © 1996-2025, Amazon.com, Inc. or its affiliates",
+  "content_hash": "abe74695a53b31a0dac234a7b94dcc8b98415af027e5dfa1bd5659897a7281e7",
+  "fetched_at": "2026-07-08T19:46:55.092696Z",
+  "content_type": "text/html"
+}

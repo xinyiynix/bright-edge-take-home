@@ -1,0 +1,88 @@
+{
+  "url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
+  "final_url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
+  "status_code": 200,
+  "title": "Google says 90% of tech workers are now using AI at work | CNN Business",
+  "description": "The overwhelming majority of tech industry workers use artificial intelligence on the job for tasks like writing and modifying code, a new Google study has found.",
+  "canonical_url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
+  "language": "en",
+  "page_type": "news",
+  "topics": [
+    {
+      "topic": "google",
+      "score": 1.0,
+      "evidence": [
+        "body",
+        "description",
+        "title"
+      ]
+    },
+    {
+      "topic": "tech",
+      "score": 1.0,
+      "evidence": [
+        "body",
+        "description",
+        "title"
+      ]
+    },
+    {
+      "topic": "workers",
+      "score": 1.0,
+      "evidence": [
+        "body",
+        "description",
+        "title"
+      ]
+    },
+    {
+      "topic": "work",
+      "score": 0.6667,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    },
+    {
+      "topic": "google tech",
+      "score": 0.6667,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    },
+    {
+      "topic": "tech workers",
+      "score": 0.6667,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    },
+    {
+      "topic": "workers ai",
+      "score": 0.6667,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    },
+    {
+      "topic": "ai work",
+      "score": 0.6667,
+      "evidence": [
+        "body",
+        "title"
+      ]
+    }
+  ],
+  "headings": {
+    "h1": [],
+    "h2": [],
+    "h3": []
+  },
+  "body_excerpt": "Google says 90% of tech workers are now using AI at work | CNN Business Ad Feedback Thank You! Your effort and contribution in providing this feedback is much appreciated. Close Markets DOW S&P 500 NASDAQ Hot Stocks Fear & Greed Index ----- is driving the US market Latest Market News",
+  "content_hash": "0404e888d7596a2a23cbf668862705fd9c5950b55f27667439885f9b544a42d1",
+  "fetched_at": "2026-07-08T19:46:57.045146Z",
+  "content_type": "text/html; charset=utf-8"
+}
