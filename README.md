@@ -4,10 +4,21 @@ Live demo: https://brightedge-crawler-pzv2s4qwdq-uc.a.run.app/
 
 Reference pictures:
 
+service:
+
 <img width="1378" height="853" alt="BrightEdge crawler demo" src="https://github.com/user-attachments/assets/897816f5-8912-4cf2-9c1b-c2dabe23c639" />
+
+example of output:
+
 <img width="1870" height="424" alt="image" src="https://github.com/user-attachments/assets/ed79e0fe-e534-4113-8935-94d9b38ec6bd" />
+
+Google run cpu, memory:
+
 <img width="983" height="296" alt="image" src="https://github.com/user-attachments/assets/32f8781b-8869-4324-aefd-922d09608099" />
 <img width="921" height="281" alt="image" src="https://github.com/user-attachments/assets/f0fdb7f0-c8ff-46d0-a8ae-1ffc86cc488a" />
+
+Pricing estimation:
+
 <img width="1869" height="865" alt="image" src="https://github.com/user-attachments/assets/b6dc401d-d42a-45ea-844d-ab5d57470d85" />
 
 ## Overview
