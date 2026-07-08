@@ -19,7 +19,8 @@ Google run cpu, memory:
 
 Pricing estimation:
 
-<img width="1869" height="865" alt="image" src="https://github.com/user-attachments/assets/b6dc401d-d42a-45ea-844d-ab5d57470d85" />
+<img width="1845" height="861" alt="image" src="https://github.com/user-attachments/assets/77da40a2-74ef-49d1-af80-853048eabdf8" />
+
 
 ## Overview
 
