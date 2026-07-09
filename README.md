@@ -129,19 +129,227 @@ tests/
   test_topic_extractor.py
 ```
 
-## Core Crawler Flow
+## Data Schema and Transformation Flow
+
+The crawler is built as a sequence of explicit data transformations. Each step takes one data shape, adds or cleans information, and passes a more structured shape to the next step.
+
+The visual version of this flow is available here:
 
 ```text
-POST /crawl
-  -> validate URL with Pydantic
-  -> fetch HTML with httpx
-  -> follow redirects
-  -> reject non-HTML content
-  -> parse title, description, canonical URL, headings, language, body
-  -> classify page type
-  -> extract ranked topics
-  -> return structured JSON response
+docs/data_flow_visualization.html
 ```
+
+### Step 1: API input as `CrawlRequest`
+
+Defined in `src/models.py`:
+
+```python
+class CrawlRequest(BaseModel):
+    url: HttpUrl
+```
+
+Example input:
+
+```json
+{
+  "url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai"
+}
+```
+
+This is the external API contract. FastAPI and Pydantic validate that `url` is a real HTTP/HTTPS URL before the crawler runs.
+
+### Step 2: Raw fetch result from `fetch_html(url)`
+
+Defined in `src/crawler.py`:
+
+```python
+html, final_url, status_code, content_type = await fetch_html(url)
+```
+
+Input:
+
+```text
+url: str
+```
+
+Output:
+
+```text
+html: str
+final_url: str
+status_code: int
+content_type: str
+```
+
+Example shape:
+
+```json
+{
+  "html": "<!doctype html><html>...</html>",
+  "final_url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
+  "status_code": 200,
+  "content_type": "text/html; charset=utf-8"
+}
+```
+
+This is the raw network layer. It handles redirects, browser-like request headers, timeout protection, response-size limits, HTTP error handling, and non-HTML rejection.
+
+### Step 3: Parsed intermediate state as `ParsedPage`
+
+Defined in `src/models.py` and produced by `src/parser.py`:
+
+```python
+parsed = parse_html(html)
+```
+
+`ParsedPage` is an internal intermediate schema. It is not the final API response. It is the cleaned and structured page representation used by the classifier and topic extractor.
+
+```python
+class ParsedPage(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    canonical_url: Optional[str] = None
+    language: Optional[str] = None
+    headings: Dict[str, List[str]] = Field(default_factory=dict)
+    body_text: str = ""
+    metadata: Dict[str, str] = Field(default_factory=dict)
+```
+
+Example shape:
+
+```json
+{
+  "title": "Google says 90% of tech workers are now using AI at work | CNN Business",
+  "description": "The overwhelming majority of tech industry workers use artificial intelligence on the job...",
+  "canonical_url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
+  "language": "en",
+  "headings": {
+    "h1": [],
+    "h2": [],
+    "h3": []
+  },
+  "body_text": "Google says 90% of tech workers are now using AI at work...",
+  "metadata": {
+    "description": "The overwhelming majority of tech industry workers..."
+  }
+}
+```
+
+At this stage, the page has been cleaned and normalized, but it has not yet been classified or scored for topics.
+
+### Step 4: Derived features
+
+After `ParsedPage` is created, the service derives three additional features.
+
+Page type:
+
+```python
+page_type = classify_page(final_url, parsed)
+```
+
+Defined in `src/classifier.py`. It uses URL patterns, metadata, and title signals to return values such as `product`, `article`, `news`, or `unknown`.
+
+Topics:
+
+```python
+topics = extract_topics(parsed)
+```
+
+Defined in `src/topic_extractor.py`. It returns ranked `Topic` objects:
+
+```python
+class Topic(BaseModel):
+    topic: str
+    score: float
+    evidence: List[str] = Field(default_factory=list)
+```
+
+Example:
+
+```json
+{
+  "topic": "tech workers",
+  "score": 0.6667,
+  "evidence": ["body", "title"]
+}
+```
+
+Content hash:
+
+```python
+hash_value = content_hash(parsed.body_text)
+```
+
+Defined in `src/crawler.py`. This creates a SHA-256 fingerprint of the cleaned body text. In a larger system, this helps with deduplication, change detection, and avoiding unnecessary reprocessing when a page has not changed.
+
+### Step 5: Final API output as `CrawlResponse`
+
+Defined in `src/models.py` and assembled in `src/main.py`:
+
+```python
+return CrawlResponse(
+    url=url,
+    final_url=final_url,
+    status_code=status_code,
+    title=parsed.title,
+    description=parsed.description,
+    canonical_url=parsed.canonical_url,
+    language=parsed.language,
+    page_type=classify_page(final_url, parsed),
+    topics=extract_topics(parsed),
+    headings=parsed.headings,
+    body_excerpt=parsed.body_text[:1000],
+    content_hash=content_hash(parsed.body_text),
+    fetched_at=datetime.now(timezone.utc),
+)
+```
+
+The final response contains both extracted fields from the page and derived fields produced by the crawler:
+
+| Field | Source | Type |
+|---|---|---|
+| `url` | API request | original input |
+| `final_url` | fetch result | raw network result after redirects |
+| `status_code` | fetch result | raw HTTP status |
+| `title` | parser | extracted HTML metadata |
+| `description` | parser | extracted HTML metadata |
+| `canonical_url` | parser | extracted HTML metadata |
+| `language` | parser | extracted HTML metadata |
+| `headings` | parser | extracted page structure |
+| `body_excerpt` | parser + truncation | processed text excerpt |
+| `page_type` | classifier | derived feature |
+| `topics` | topic extractor | derived ranked features |
+| `content_hash` | hash function | derived fingerprint |
+| `fetched_at` | API service | processing timestamp |
+
+### Topic scoring strategy
+
+The topic extractor uses a lexical scoring approach. "Lexical" means it looks at the actual words and short phrases that appear in the page text. It does not understand meaning through embeddings, vectors, or LLM reasoning. For example, lexical matching can count `AI`, `tech`, and `workers`, but it does not automatically know that `software engineer` and `developer` are semantically related unless both phrases appear in the text.
+
+The scoring process is:
+
+1. Collect text from title, description, headings, and body.
+2. Tokenize words using a regular expression.
+3. Remove stop words and site-specific noise words.
+4. Count single-word terms and two-word phrases.
+5. Apply field weights:
+   - title: `5.0`
+   - description: `3.0`
+   - h1: `4.0`
+   - h2/h3: `2.0`
+   - body: `1.0`
+6. Normalize each topic score by the highest raw topic score on that page.
+
+Example:
+
+```text
+raw_score("google") = title_count * 5 + description_count * 3 + body_count * 1
+normalized_score("google") = raw_score("google") / max_raw_score_on_this_page
+```
+
+The highest-scoring topic on each page receives `1.0`. Other scores are relative to that top topic. These scores are not probabilities; they are normalized relevance scores within one page.
+
+I chose this lexical baseline because it is cheap, explainable, deterministic, and easy to test. A production system could later add semantic embeddings or LLM enrichment for pages where lexical signals are not enough.
 
 ## Topic Extraction Approach
 
