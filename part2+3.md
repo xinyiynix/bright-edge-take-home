@@ -212,6 +212,21 @@ Inverted-index example:
 <img width="1366" height="828" alt="Inverted index example" src="https://github.com/user-attachments/assets/939a09e9-527b-40c3-86fe-4462e3563c1e" />
 
 
+## Architecture
+
+- **Frontend (`client.py`)**: A Flask app that lets users input data and talk with backend.
+- **Backend (`server.py`)**: A Flask app that runs MapReduce jobs, works with Hadoop and Kafka, and gives APIs for search and top-N queries.
+- **MapReduce Scripts**: Python scripts that define mapper and reducer for Hadoop jobs.
+
+<img width="1520" height="1114" alt="image" src="https://github.com/user-attachments/assets/38e3d466-1d74-4857-b532-93753ba01c59" />
+
+
+- **Infrastructure (`main.tf`)**: Terraform config that sets up GCP resources like Dataproc cluster, Kafka on GKE, and Compute Engine instances with Docker containers.
+
+<img width="1236" height="888" alt="image" src="https://github.com/user-attachments/assets/7715f228-07d8-4190-a319-48400eda4025" />
+
+
+
 
 
 ## Detail Document
