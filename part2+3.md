@@ -2,274 +2,128 @@
 
 This document answers Part 2 and Part 3 of the BrightEdge take-home. It extends the Part 1 crawler into a scalable collection and metadata-processing system for billions of URLs.
 
-The design intentionally uses GCP because I deployed Part 1 on Google Cloud Run and have prior cloud infrastructure coursework using GCP, Kafka, Hadoop/Dataproc, Docker, and Terraform. I use those ideas here as design building blocks, while keeping the proposal aligned with enterprise data engineering best practices.
+## Table of Contents
 
-## Assignment Requirements Covered
+- [Executive Summary](#executive-summary)
+- [High-Level Architecture](#high-level-architecture)
+- [Assignment Questions: Short Answers](#assignment-questions-short-answers)
+  - [Part 2 Short Answers](#part-2-short-answers)
+  - [Part 3 Short Answers](#part-3-short-answers)
+- [Example Screenshots from My GCP/Hadoop Coursework](#example-screenshots-from-my-gcphadoop-coursework)
+  - [Screenshot 1: Cloud Storage Bucket as Landing/Raw/Output Zone](#screenshot-1-cloud-storage-bucket-as-landingrawoutput-zone)
+  - [Screenshot 2: HDFS Output Directory After Hadoop Job](#screenshot-2-hdfs-output-directory-after-hadoop-job)
+  - [Screenshot 3: Hadoop Result Copied Back to Cloud Storage](#screenshot-3-hadoop-result-copied-back-to-cloud-storage)
+- [Personal Technical Connection](#personal-technical-connection)
+- [Detailed Design](#detailed-design)
+  - [Part 1 Code Reuse](#part-1-code-reuse)
+  - [GCP Service Choices](#gcp-service-choices)
+  - [Kafka Topic and Queue Design](#kafka-topic-and-queue-design)
+  - [Message Schemas](#message-schemas)
+  - [Storage Design](#storage-design)
+  - [Unified Data Schema](#unified-data-schema)
+  - [Hadoop / Dataproc Usage](#hadoop--dataproc-usage)
+  - [Distributed Top-N Topic Aggregation](#distributed-top-n-topic-aggregation)
+  - [Topic Inverted Index](#topic-inverted-index)
+  - [Cost, Reliability, Performance, and Scale](#cost-reliability-performance-and-scale)
+  - [SLOs and SLAs](#slos-and-slas)
+  - [Monitoring Metrics and Tools](#monitoring-metrics-and-tools)
+- [Proof of Concept and Release Plan](#proof-of-concept-and-release-plan)
+  - [POC Scope](#poc-scope)
+  - [POC Evaluation Criteria](#poc-evaluation-criteria)
+  - [Known vs Non-Trivial Work](#known-vs-non-trivial-work)
+  - [Potential Blockers](#potential-blockers)
+  - [Implementation Schedule](#implementation-schedule)
+  - [Release Plan](#release-plan)
+- [Final Interview Narrative](#final-interview-narrative)
 
-Part 2 asks for:
+## Executive Summary
 
-- Operational design for collecting billions of URLs using the code developed in Part 1.
-- Storage design for metadata and content.
-- Unified data schema.
-- SLOs and SLAs.
-- Monitoring metrics and tools.
-- Cost, reliability, performance, and scale optimization.
+The Part 1 crawler is a working single-URL metadata service. For Part 2, I would operationalize the same core crawler code as a distributed data pipeline:
 
-Part 3 asks for:
+part1:
 
-- Engineering plan to proceed to Proof of Concept.
-- Potential blockers.
-- Known/trivial work and ETA.
-- Implementation schedule.
-- Release plan and quality criteria.
-- How to evaluate the POC.
+<img width="1506" height="593" alt="image" src="https://github.com/user-attachments/assets/1cbebca4-a958-4d01-88bb-f96362f32e59" />
 
-## Part 1 Code Reuse
+part2:
 
-The Part 1 code already separates the crawler into reusable functions:
+<img width="1412" height="666" alt="image" src="https://github.com/user-attachments/assets/b1cb0aa5-ad16-4e91-ba72-de68f3519d79" />
 
-```text
-fetch_html(url)
-  -> raw HTML fetch stage
+Kafka and map-reduce:
 
-parse_html(html)
-  -> structured metadata extraction stage
 
-classify_page(final_url, parsed)
-  -> page-type enrichment stage
+<img width="1402" height="367" alt="image" src="https://github.com/user-attachments/assets/cd347b4b-e0c0-44e8-a446-b3a9d9bdaa85" />
+<img width="1384" height="753" alt="image" src="https://github.com/user-attachments/assets/8abc66d9-7ec9-4ad0-b449-c2aabd506b98" />
+<img width="1366" height="510" alt="image" src="https://github.com/user-attachments/assets/de2538b6-5ece-4adb-a54a-0535cfa57411" />
 
-extract_topics(parsed)
-  -> topic feature extraction stage
+Output Store:
 
-content_hash(parsed.body_text)
-  -> deduplication and change-detection stage
-```
 
-In Part 1, these run in one synchronous API request. In Part 2, I would reuse the same logic inside workers that consume URL messages from a queue.
+<img width="1388" height="628" alt="image" src="https://github.com/user-attachments/assets/1d2cd7c6-8963-4950-9e89-6745f3742349" />
+top-N:
 
-## Personal Technical Connection
 
-This design is influenced by three prior cloud infrastructure patterns I have implemented:
+<img width="1371" height="756" alt="image" src="https://github.com/user-attachments/assets/1dbe0b0f-1e74-426c-91e1-8445051aa469" />
+Inverted-index:
 
-1. Kafka producer/consumer pipeline from my YouTube API project:
-   - API source produced messages into Kafka topics.
-   - Consumers processed messages by group.
-   - Later stages filtered, aggregated, and forwarded records to another queue.
 
-2. Hadoop/MapReduce top-N and word-count style jobs:
-   - Mapper tokenized input and emitted key-value records.
-   - Reducer aggregated counts.
-   - Top-N reducer used heap-based ranking.
-   - Combiner reduced shuffle volume and improved runtime.
+<img width="1366" height="828" alt="image" src="https://github.com/user-attachments/assets/939a09e9-527b-40c3-86fe-4462e3563c1e" />
 
-3. GCP infrastructure project:
-   - Terraform provisioned Dataproc, GKE Kafka, Compute Engine, and Dockerized services.
-   - Backend service triggered Hadoop streaming jobs and stored outputs back into cloud storage.
-
-For this assignment, I apply the same mental model:
-
-```text
-billions of URL inputs
-  -> producer
-  -> Kafka topics / queues
-  -> crawler consumer groups
-  -> raw + parsed + final metadata storage
-  -> Hadoop/Dataproc/Dataflow/BigQuery aggregation
-  -> monitoring and release controls
-```
-
-## High-Level Architecture
 
 ```text
-Text files / MySQL URL table for a domain-month
-  -> Ingestion producer validates, normalizes, dedupes URLs
-  -> Kafka topic: crawl-url-requests
-  -> Crawler consumer group fetches HTML with Part 1 fetch_html
-  -> Kafka topic: crawl-fetch-results
-  -> Parser/enrichment consumers run parse_html, classify_page, extract_topics, content_hash
-  -> Kafka topic: page-metadata-events
-  -> Storage writer persists raw HTML, metadata, topics, failures
-  -> Hadoop/Dataproc or BigQuery computes domain/month top-N topics and reports
-  -> Monitoring dashboards track progress, SLOs, error rates, queue lag, cost
+Billions of URLs for a domain/month
+  -> ingestion producer
+  -> Kafka/PubSub crawl-task queue
+  -> horizontally scaled crawler workers
+  -> raw HTML in Cloud Storage
+  -> Hadoop top-N aggregation
+  -> monitoring dashboards, SLOs, retries, and release controls
 ```
 
-GCP implementation:
+The main design goal is not only to crawl more URLs. It is to make every URL outcome observable, retryable, cost-controlled, and queryable.
 
-| Layer | Service choice | Why |
-|---|---|---|
-| Input files | Cloud Storage | Natural landing zone for monthly URL text files |
-| MySQL input | Cloud SQL for MySQL or external MySQL via Dataflow JDBC | Handles tabular URL source |
-| Orchestration | Cloud Composer | Airflow-compatible DAGs for domain/month workflows |
-| Queue | Kafka on GKE or managed Kafka; Pub/Sub as GCP-native alternative | Kafka matches my coursework and supports topics/consumer groups; Pub/Sub would reduce ops burden |
-| Crawler workers | Cloud Run workers or GKE deployments | Cloud Run is simpler and scales to zero; GKE works well if already running Kafka |
-| Raw content | Cloud Storage | Cheap object storage for raw HTML snapshots |
-| Metadata warehouse | BigQuery | Queryable unified metadata schema |
-| Batch processing | Dataproc Hadoop/Spark, Dataflow, or BigQuery SQL | Dataproc matches Hadoop coursework; BigQuery is simplest for SQL analytics |
-| Monitoring | Cloud Monitoring, Cloud Logging, Error Reporting, Alerting | GCP-native metrics, logs, dashboards, alerts |
-| Infrastructure | Terraform | Reproducible GCP deployment, based on prior project experience |
-
-## Kafka Topic and Queue Design
-
-I would design the pipeline around explicit topics. Each topic represents a stable contract between stages.
-
-| Topic | Producer | Consumer | Message meaning |
-|---|---|---|---|
-| `crawl-url-requests` | URL ingestion producer | Crawler workers | One URL crawl task |
-| `crawl-fetch-results` | Crawler workers | Parser/enrichment workers | HTTP result plus raw HTML pointer |
-| `page-metadata-events` | Parser/enrichment workers | Storage writer, analytics jobs | Parsed metadata, topics, classification, hash |
-| `crawl-retry-requests` | Failure handler | Crawler workers | Retryable URL tasks with backoff |
-| `crawl-dead-letter` | Any stage | Operations/replay tooling | Terminal failures needing review |
-| `crawl-progress-events` | All workers | Monitoring sink | Lightweight progress and status events |
-
-Topic partitioning strategy:
+GCP implementation view:
 
 ```text
-partition key = normalized_domain or hash(normalized_url)
+Cloud Storage / MySQL
+  -> Kafka on GKE or Pub/Sub
+  -> Cloud Run crawler workers
+  -> Cloud Storage raw/parsed zones
+  -> Hadoop analytics
+  -> Cloud Monitoring + Logging + Alerting
 ```
 
-Tradeoff:
+## Assignment Questions: Short Answers
 
-- Partitioning by domain makes domain-level throttling and ordering easier.
-- Partitioning by URL hash spreads load more evenly.
-- I would start with domain-based partitioning plus per-domain rate limiting, because crawler politeness and blocking risk matter more than perfect load balance.
+### Part 2 Short Answers
 
-Consumer groups:
-
-| Consumer group | Work |
+| Assignment question | Short answer |
 |---|---|
-| `url-validator-group` | Validate, normalize, dedupe URL tasks |
-| `fetcher-group` | Fetch HTML, follow redirects, record status |
-| `parser-group` | Parse HTML into `ParsedPage` |
-| `feature-group` | Classify page, extract topics, compute content hash |
-| `storage-writer-group` | Write raw HTML, metadata, topics, failures |
-| `monitoring-sink-group` | Convert progress events into metrics |
+| How to operationalize collection of billions of URLs? | Split the monthly URL input into one message per URL, publish to a queue, and process with horizontally scaled crawler workers using the Part 1 code. |
+| Input source? | Text files in Cloud Storage and/or MySQL tables partitioned by `domain` and `crawl_month`. |
+| Unified data schema? | A shared schema centered on `job_id`, `url`, `domain`, `crawl_month`, HTTP result, parsed metadata, page type, topics, content hash, status, attempts, and timestamps. |
+| How to optimize cost? | Compress raw HTML, avoid storing raw HTML in BigQuery, use autoscale workers. |
+| How to optimize reliability? | Retry transient failures, validate schemas at queue boundaries. |
+| How to optimize performance? | Use async fetchers, queue partitioning, worker autoscaling, and batch aggregation for top-N reports. |
+| SLOs? | 95% of submitted URLs should be fetched and processed within 24 hours. Metadata should be queryable within 5 minutes after extraction. |
+| SLAs? | API availability should be 99.95%. |
+| Monitoring? | Cloud Monitoring/Logging, Kafka lag metrics, BigQuery operational tables, dead-letter counts, domain error rates, latency, storage bytes, and budget alerts. |
 
-## Message Schemas
+### Part 3 Short Answers
 
-### Input URL Task
+| Assignment question | Short answer |
+|---|---|
+| How to proceed to POC? | Build a small end-to-end version for 10k-100k URLs using producer, queue, crawler workers, Cloud Storage, BigQuery, top-N aggregation, and monitoring. |
+| How to evaluate POC? | Check metadata success rate, terminal state accounting, retry/dead-letter behavior, top-N output correctness, dashboard visibility, and rerun/idempotency. |
+| Known/trivial work? | Reuse Part 1 crawler code, define queue schemas, create Cloud Storage layout, create BigQuery tables, and add basic dashboards. |
+| Potential blockers? | `403/429` blocking, JS-heavy pages, raw HTML storage cost, noisy topics, MySQL extraction scale, and retry/idempotency correctness. |
+| Estimates? | 7-12 engineering days for a meaningful POC, depending on Kafka/Dataproc availability and whether JS rendering is in scope. |
+| Successful release? | Start with a domain/month pilot, monitor closely, ramp traffic gradually, preserve replayability, and roll back worker images or pause producers if error budget is exceeded. |
 
-```json
-{
-  "job_id": "amazon-2026-07",
-  "url": "https://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C",
-  "normalized_url": "https://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C",
-  "domain": "amazon.com",
-  "crawl_month": "2026-07",
-  "source_type": "mysql",
-  "source_uri": "mysql://url_input.amazon_2026_07",
-  "priority": "normal",
-  "attempt": 0,
-  "created_at": "2026-07-01T00:00:00Z"
-}
-```
+## Example Screenshots from My GCP/Hadoop Coursework
 
-### Fetch Result
+These screenshots are useful as supporting evidence/examples I have already worked with the same operational concepts this design uses: Cloud Storage as a landing/output zone, HDFS output partitions from Hadoop, and cloud bucket output after a batch job completes.
 
-```json
-{
-  "job_id": "amazon-2026-07",
-  "url": "https://www.amazon.com/...",
-  "final_url": "https://www.amazon.com/...",
-  "domain": "amazon.com",
-  "crawl_month": "2026-07",
-  "status_code": 200,
-  "content_type": "text/html",
-  "raw_html_gcs_uri": "gs://brightedge-raw-html/domain=amazon.com/crawl_month=2026-07/hash.html.gz",
-  "fetch_latency_ms": 842,
-  "attempt": 1,
-  "fetched_at": "2026-07-08T19:06:31Z"
-}
-```
-
-### Parsed Page Intermediate Record
-
-This extends the Part 1 `ParsedPage` concept:
-
-```json
-{
-  "job_id": "amazon-2026-07",
-  "url": "https://www.amazon.com/...",
-  "final_url": "https://www.amazon.com/...",
-  "title": "Cuisinart CPT-122 Compact Plastic 2-Slice Toaster",
-  "description": "Online shopping for kitchen appliances...",
-  "canonical_url": "https://www.amazon.com/.../dp/B009GQ034C",
-  "language": "en-us",
-  "headings": {
-    "h1": ["Cuisinart CPT-122 Compact Plastic 2-Slice Toaster"],
-    "h2": [],
-    "h3": []
-  },
-  "body_text_gcs_uri": "gs://brightedge-parsed-pages/domain=amazon.com/crawl_month=2026-07/hash.txt.gz",
-  "metadata": {
-    "og:title": "Cuisinart CPT-122 Compact Plastic 2-Slice Toaster"
-  },
-  "parsed_at": "2026-07-08T19:06:32Z"
-}
-```
-
-### Final Metadata Record
-
-This extends the Part 1 `CrawlResponse` for production operations:
-
-```json
-{
-  "job_id": "amazon-2026-07",
-  "url": "https://www.amazon.com/...",
-  "final_url": "https://www.amazon.com/...",
-  "domain": "amazon.com",
-  "crawl_month": "2026-07",
-  "status_code": 200,
-  "crawl_status": "success",
-  "title": "Cuisinart CPT-122 Compact Plastic 2-Slice Toaster",
-  "description": "Online shopping for kitchen appliances...",
-  "canonical_url": "https://www.amazon.com/.../dp/B009GQ034C",
-  "language": "en-us",
-  "page_type": "product",
-  "topics": [
-    {
-      "topic": "toaster",
-      "score": 1.0,
-      "evidence": ["title", "body"]
-    }
-  ],
-  "content_hash": "sha256...",
-  "raw_html_gcs_uri": "gs://brightedge-raw-html/...",
-  "body_text_gcs_uri": "gs://brightedge-parsed-pages/...",
-  "attempt": 1,
-  "fetched_at": "2026-07-08T19:06:31Z",
-  "processed_at": "2026-07-08T19:06:33Z"
-}
-```
-
-### Failure Record
-
-```json
-{
-  "job_id": "rei-2026-07",
-  "url": "https://www.rei.com/blog/...",
-  "domain": "rei.com",
-  "crawl_month": "2026-07",
-  "crawl_status": "blocked",
-  "status_code": 403,
-  "error_type": "http_403",
-  "error_message": "HTTP 403 from server",
-  "attempt": 2,
-  "next_retry_at": "2026-07-08T20:00:00Z",
-  "terminal": false
-}
-```
-
-## Storage Design
-
-The storage design separates raw content, parsed content, metadata, topics, and failures. This keeps cost controllable and lets different workloads use the right storage format.
-
-## Suggested Screenshots from My GCP/Hadoop Coursework
-
-These screenshots are useful as supporting evidence because they show I have already worked with the same operational concepts this design uses: Cloud Storage as a landing/output zone, HDFS output partitions from Hadoop, and cloud bucket output after a batch job completes.
-
-I would include them as examples, not as the proposed production system itself. The production design for BrightEdge would use cleaner bucket names, domain/month partitions, and BigQuery tables, but these screenshots show the same data engineering pattern in practice.
-
-### Screenshot 1: Cloud Storage bucket as landing/raw/output zone
+### Screenshot 1: Cloud Storage Bucket as Landing/Raw/Output Zone
 
 What the screenshot shows:
 
@@ -306,14 +160,9 @@ Suggested caption:
 Example from my GCP Hadoop coursework: Cloud Storage acting as the data lake layer for input data, processing scripts, and output folders. In the BrightEdge design, this maps to URL input files, raw HTML snapshots, parsed page records, and aggregated topic outputs partitioned by domain and crawl month.
 ```
 
-Markdown to insert after uploading the image to GitHub:
+<img width="1280" height="630" alt="Cloud Storage bucket showing input scripts and results folders" src="https://github.com/user-attachments/assets/937b7aac-f70e-452d-a193-df7b1f5204f8" />
 
-```markdown
-<img width="1280" height="630" alt="image" src="https://github.com/user-attachments/assets/937b7aac-f70e-452d-a193-df7b1f5204f8" />
-
-```
-
-### Screenshot 2: HDFS output directory after Hadoop job
+### Screenshot 2: HDFS Output Directory After Hadoop Job
 
 What the screenshot shows:
 
@@ -342,7 +191,7 @@ domain_monthly_topic_top_n/
   ...
 ```
 
-This is exactly the right mental model for large-scale topic aggregation:
+This is the right mental model for large-scale topic aggregation:
 
 ```text
 page_topics records
@@ -357,14 +206,9 @@ Suggested caption:
 Example Hadoop output from my coursework: a successful MapReduce job writes an `_SUCCESS` marker and multiple reducer output partitions. In the BrightEdge design, the same pattern can be used for large top-N topic aggregation or inverted index generation.
 ```
 
-Markdown to insert:
+<img width="1280" height="641" alt="HDFS output directory showing success marker and reducer part files" src="https://github.com/user-attachments/assets/1ef4af17-9700-4e68-80f6-0c0576563f4d" />
 
-```markdown
-<img width="1280" height="641" alt="image" src="https://github.com/user-attachments/assets/1ef4af17-9700-4e68-80f6-0c0576563f4d" />
-
-```
-
-### Screenshot 3: Hadoop result copied back to Cloud Storage
+### Screenshot 3: Hadoop Result Copied Back to Cloud Storage
 
 What the screenshot shows:
 
@@ -400,14 +244,208 @@ Suggested caption:
 Example from my Hadoop-on-GCP work: reducer output is merged and stored back in Cloud Storage. For BrightEdge, the same pattern can publish top-N topic summaries or inverted index shards into a durable analytics output zone.
 ```
 
-Markdown to insert:
+<img width="2344" height="904" alt="Cloud Storage folder showing merged Hadoop output file" src="https://github.com/user-attachments/assets/8c46b72c-dcc7-43f6-b709-eca580f752ef" />
 
-```markdown
-<img width="2344" height="904" alt="image" src="https://github.com/user-attachments/assets/8c46b72c-dcc7-43f6-b709-eca580f752ef" />
+## Personal Technical Connection
 
+This design is influenced by three prior cloud infrastructure patterns I have implemented:
+
+1. Kafka producer/consumer pipeline from my YouTube API project:
+   - API source produced messages into Kafka topics.
+   - Consumers processed messages by group.
+   - Later stages filtered, aggregated, and forwarded records to another queue.
+
+2. Hadoop/MapReduce top-N and word-count style jobs:
+   - Mapper tokenized input and emitted key-value records.
+   - Reducer aggregated counts.
+   - Top-N reducer used heap-based ranking.
+   - Combiner reduced shuffle volume and improved runtime.
+
+3. GCP infrastructure work:
+   - Cloud Storage as data lake.
+   - Dataproc/HDFS for batch processing.
+   - Dockerized services and Terraform-style infrastructure thinking.
+
+For this assignment, I apply the same mental model:
+
+```text
+billions of URL inputs
+  -> producer
+  -> Kafka topics / queues
+  -> crawler consumer groups
+  -> raw + parsed + final metadata storage
+  -> Hadoop/Dataproc/Dataflow/BigQuery aggregation
+  -> monitoring and release controls
 ```
 
-### Cloud Storage Layout
+## Detailed Design
+
+### Part 1 Code Reuse
+
+The Part 1 code already separates the crawler into reusable functions:
+
+```text
+fetch_html(url)
+  -> raw HTML fetch stage
+
+parse_html(html)
+  -> structured metadata extraction stage
+
+classify_page(final_url, parsed)
+  -> page-type enrichment stage
+
+extract_topics(parsed)
+  -> topic feature extraction stage
+
+content_hash(parsed.body_text)
+  -> deduplication and change-detection stage
+```
+
+In Part 1, these run in one synchronous API request. In Part 2, I would reuse the same logic inside workers that consume URL messages from a queue.
+
+### GCP Service Choices
+
+| Layer | Service choice | Why |
+|---|---|---|
+| Input files | Cloud Storage | Natural landing zone for monthly URL text files |
+| MySQL input | Cloud SQL for MySQL or external MySQL via Dataflow JDBC | Handles tabular URL source |
+| Orchestration | Cloud Composer | Airflow-compatible DAGs for domain/month workflows |
+| Queue | Kafka on GKE or managed Kafka; Pub/Sub as GCP-native alternative | Kafka matches my coursework and supports topics/consumer groups; Pub/Sub reduces ops burden |
+| Crawler workers | Cloud Run workers or GKE deployments | Cloud Run is simpler and scales to zero; GKE works well if already running Kafka |
+| Raw content | Cloud Storage | Cheap object storage for raw HTML snapshots |
+| Metadata warehouse | BigQuery | Queryable unified metadata schema |
+| Batch processing | Dataproc Hadoop/Spark, Dataflow, or BigQuery SQL | Dataproc matches Hadoop coursework; BigQuery is simplest for SQL analytics |
+| Monitoring | Cloud Monitoring, Cloud Logging, Error Reporting, Alerting | GCP-native metrics, logs, dashboards, alerts |
+| Infrastructure | Terraform | Reproducible GCP deployment |
+
+### Kafka Topic and Queue Design
+
+I would design the pipeline around explicit topics. Each topic represents a stable contract between stages.
+
+| Topic | Producer | Consumer | Message meaning |
+|---|---|---|---|
+| `crawl-url-requests` | URL ingestion producer | Crawler workers | One URL crawl task |
+| `crawl-fetch-results` | Crawler workers | Parser/enrichment workers | HTTP result plus raw HTML pointer |
+| `page-metadata-events` | Parser/enrichment workers | Storage writer, analytics jobs | Parsed metadata, topics, classification, hash |
+| `crawl-retry-requests` | Failure handler | Crawler workers | Retryable URL tasks with backoff |
+| `crawl-dead-letter` | Any stage | Operations/replay tooling | Terminal failures needing review |
+| `crawl-progress-events` | All workers | Monitoring sink | Lightweight progress and status events |
+
+Topic partitioning strategy:
+
+```text
+partition key = normalized_domain or hash(normalized_url)
+```
+
+Tradeoff:
+
+- Partitioning by domain makes domain-level throttling and ordering easier.
+- Partitioning by URL hash spreads load more evenly.
+- I would start with domain-based partitioning plus per-domain rate limiting, because crawler politeness and blocking risk matter more than perfect load balance.
+
+Consumer groups:
+
+| Consumer group | Work |
+|---|---|
+| `url-validator-group` | Validate, normalize, dedupe URL tasks |
+| `fetcher-group` | Fetch HTML, follow redirects, record status |
+| `parser-group` | Parse HTML into `ParsedPage` |
+| `feature-group` | Classify page, extract topics, compute content hash |
+| `storage-writer-group` | Write raw HTML, metadata, topics, failures |
+| `monitoring-sink-group` | Convert progress events into metrics |
+
+### Message Schemas
+
+Input URL task:
+
+```json
+{
+  "job_id": "amazon-2026-07",
+  "url": "https://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C",
+  "normalized_url": "https://www.amazon.com/Cuisinart-CPT-122-Compact-2-Slice-Toaster/dp/B009GQ034C",
+  "domain": "amazon.com",
+  "crawl_month": "2026-07",
+  "source_type": "mysql",
+  "source_uri": "mysql://url_input.amazon_2026_07",
+  "priority": "normal",
+  "attempt": 0,
+  "created_at": "2026-07-01T00:00:00Z"
+}
+```
+
+Fetch result:
+
+```json
+{
+  "job_id": "amazon-2026-07",
+  "url": "https://www.amazon.com/...",
+  "final_url": "https://www.amazon.com/...",
+  "domain": "amazon.com",
+  "crawl_month": "2026-07",
+  "status_code": 200,
+  "content_type": "text/html",
+  "raw_html_gcs_uri": "gs://brightedge-raw-html/domain=amazon.com/crawl_month=2026-07/hash.html.gz",
+  "fetch_latency_ms": 842,
+  "attempt": 1,
+  "fetched_at": "2026-07-08T19:06:31Z"
+}
+```
+
+Final metadata record:
+
+```json
+{
+  "job_id": "amazon-2026-07",
+  "url": "https://www.amazon.com/...",
+  "final_url": "https://www.amazon.com/...",
+  "domain": "amazon.com",
+  "crawl_month": "2026-07",
+  "status_code": 200,
+  "crawl_status": "success",
+  "title": "Cuisinart CPT-122 Compact Plastic 2-Slice Toaster",
+  "description": "Online shopping for kitchen appliances...",
+  "canonical_url": "https://www.amazon.com/.../dp/B009GQ034C",
+  "language": "en-us",
+  "page_type": "product",
+  "topics": [
+    {
+      "topic": "toaster",
+      "score": 1.0,
+      "evidence": ["title", "body"]
+    }
+  ],
+  "content_hash": "sha256...",
+  "raw_html_gcs_uri": "gs://brightedge-raw-html/...",
+  "body_text_gcs_uri": "gs://brightedge-parsed-pages/...",
+  "attempt": 1,
+  "fetched_at": "2026-07-08T19:06:31Z",
+  "processed_at": "2026-07-08T19:06:33Z"
+}
+```
+
+Failure record:
+
+```json
+{
+  "job_id": "rei-2026-07",
+  "url": "https://www.rei.com/blog/...",
+  "domain": "rei.com",
+  "crawl_month": "2026-07",
+  "crawl_status": "blocked",
+  "status_code": 403,
+  "error_type": "http_403",
+  "error_message": "HTTP 403 from server",
+  "attempt": 2,
+  "next_retry_at": "2026-07-08T20:00:00Z",
+  "terminal": false
+}
+```
+
+### Storage Design
+
+The storage design separates raw content, parsed content, metadata, topics, and failures. This keeps cost controllable and lets different workloads use the right storage format.
+
+Cloud Storage layout:
 
 ```text
 gs://brightedge-url-input/
@@ -425,7 +463,7 @@ gs://brightedge-analytics-output/
   domain_monthly_topic_top_n/crawl_month=2026-07/part-*.jsonl
 ```
 
-### BigQuery Tables
+BigQuery tables:
 
 | Table | Purpose | Partition | Cluster |
 |---|---|---|---|
@@ -437,11 +475,9 @@ gs://brightedge-analytics-output/
 | `domain_monthly_topic_top_n` | Aggregated top-N topics by domain/month | `crawl_month` | `domain` |
 | `crawl_slo_daily` | Daily progress and SLO metrics | `metric_date` | `domain` |
 
-## Unified Data Schema
+### Unified Data Schema
 
 I would keep a unified logical page schema, even if physically split across tables for cost/performance.
-
-Core fields:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -467,15 +503,7 @@ Core fields:
 | `fetched_at` | TIMESTAMP | Fetch time |
 | `processed_at` | TIMESTAMP | Final processing time |
 
-Why this schema works:
-
-- It preserves Part 1 outputs.
-- It adds operational fields required for scale.
-- It supports partitioning by domain/month.
-- It separates heavy content from queryable metadata.
-- It supports retries and failure analysis.
-
-## Hadoop / Dataproc Usage
+### Hadoop / Dataproc Usage
 
 I would not use Hadoop for fetching individual URLs. Fetching is I/O-bound and better handled by horizontally scaled workers. I would use Hadoop/Dataproc for large batch analytics after metadata has been collected.
 
@@ -509,9 +537,7 @@ output:
   domain_monthly_topic_top_n table or JSONL files
 ```
 
-This directly connects to my Hadoop coursework where the mapper emitted key-value records and the reducer aggregated them. The combiner lesson also applies: pre-aggregating topic scores near the mapper reduces shuffle cost.
-
-## Distributed Top-N Topic Aggregation
+### Distributed Top-N Topic Aggregation
 
 If the dataset is small, one machine can load all topic counts and sort them. That does not work for billions of pages and potentially billions of topic observations. For a production crawler, Top-N should be computed as a distributed job.
 
@@ -538,18 +564,16 @@ Why two stages:
 - The first job produces complete counts.
 - The second job ranks those counts without requiring one machine to sort the entire dataset.
 
-Important correctness note:
+Correctness note:
 
 ```text
 If each mapper only keeps local top-N before global aggregation, it can miss a globally important topic
 that is moderately frequent on many machines but never appears in any one machine's local top-N.
 ```
 
-To guarantee exact results, I would first aggregate complete counts by key, then apply Top-N. Local top-N is safe as an optimization after counts are complete per partition, or if we intentionally accept approximate results with a larger candidate set.
+To guarantee exact results, I would first aggregate complete counts by key, then apply Top-N.
 
-### Top-N Input Schema
-
-The Top-N job can read from the `page_topics` BigQuery table export or Cloud Storage JSONL:
+Top-N input schema:
 
 ```json
 {
@@ -563,23 +587,7 @@ The Top-N job can read from the `page_topics` BigQuery table export or Cloud Sto
 }
 ```
 
-### Top-N Intermediate Schema
-
-After Job 1:
-
-```json
-{
-  "domain": "cnn.com",
-  "crawl_month": "2026-07",
-  "topic": "AI",
-  "total_score": 30000000.0,
-  "page_count": 30000000
-}
-```
-
-### Top-N Output Schema
-
-After Job 2:
+Top-N output schema:
 
 ```json
 {
@@ -593,18 +601,7 @@ After Job 2:
 }
 ```
 
-Example BrightEdge interpretation:
-
-```text
-Top topics in July:
-1. AI
-2. iPhone
-3. Prime Day
-4. camping
-5. electric vehicles
-```
-
-## Topic Inverted Index
+### Topic Inverted Index
 
 An inverted index maps a term to the documents or URLs where that term appears.
 
@@ -612,14 +609,6 @@ Normal document storage is:
 
 ```text
 URL -> topics
-```
-
-Example:
-
-```text
-amazon_url -> toaster, kitchen appliance, Cuisinart
-rei_url    -> outdoors, camping, indoorsy friend
-cnn_url    -> AI, tech jobs, Google study
 ```
 
 An inverted index reverses that relationship:
@@ -636,75 +625,29 @@ camping -> [rei_url]
 AI      -> [cnn_url]
 ```
 
-This matters for search and content retrieval. If a user or downstream service asks for pages about `AI`, the system should not scan billions of pages. It can directly look up:
+This matters for search and content retrieval. If a downstream service asks for pages about `AI`, the system should not scan billions of pages. It can directly look up:
 
 ```text
 AI -> [cnn.com/article1, google.com/blog2, ...]
 ```
 
-### Inverted Index MapReduce Design
-
-Input:
-
-```json
-{
-  "url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
-  "domain": "cnn.com",
-  "crawl_month": "2026-07",
-  "topics": [
-    {"topic": "AI", "score": 1.0},
-    {"topic": "tech jobs", "score": 0.8}
-  ]
-}
-```
-
-Mapper emits:
+Inverted index MapReduce design:
 
 ```text
-(AI, cnn_url, 1.0)
-(tech jobs, cnn_url, 0.8)
+input:
+  {url, topics: [{topic, score}]}
+
+mapper:
+  emit(topic, {url, domain, crawl_month, score})
+
+shuffle:
+  group all URLs by topic
+
+reducer:
+  emit(topic, postings_list)
 ```
 
-Shuffle groups by topic:
-
-```text
-AI -> [(cnn_url, 1.0), (google_blog_url, 0.9), ...]
-```
-
-Reducer outputs postings lists:
-
-```json
-{
-  "topic": "AI",
-  "postings": [
-    {
-      "url": "https://www.cnn.com/2025/09/23/tech/google-study-90-percent-tech-jobs-ai",
-      "domain": "cnn.com",
-      "crawl_month": "2026-07",
-      "score": 1.0
-    }
-  ]
-}
-```
-
-More advanced postings can include positions if the index is built from body text instead of extracted topics:
-
-```json
-{
-  "term": "tech",
-  "postings": [
-    {
-      "url": "https://example.com/article",
-      "count": 4,
-      "positions": [5, 18, 30, 72]
-    }
-  ]
-}
-```
-
-Positions help phrase search. For example, to answer `tech jobs`, the search layer can check whether `tech` and `jobs` appear near each other.
-
-### Word Count vs Top-N vs Inverted Index
+Word Count vs Top-N vs Inverted Index:
 
 | Pattern | Question answered | Output example | BrightEdge use |
 |---|---|---|---|
@@ -712,11 +655,9 @@ Positions help phrase search. For example, to answer `tech jobs`, the search lay
 | Top-N | Which terms/topics are most frequent? | `Top 100 topics in July` | SEO trend reports and domain summaries |
 | Inverted index | Which URLs contain this term/topic? | `AI -> [url1, url2]` | Fast lookup of relevant URLs |
 
-This is why the Part 1 topic extractor is useful beyond one API response. At scale, those per-page topics become input for distributed counting, Top-N analytics, and searchable topic-to-URL indexes.
+### Cost, Reliability, Performance, and Scale
 
-## Cost, Reliability, Performance, and Scale
-
-### Cost
+Cost:
 
 - Store raw HTML in compressed Cloud Storage, not BigQuery.
 - Keep BigQuery tables for queryable metadata and topic rows.
@@ -725,7 +666,7 @@ This is why the Part 1 topic extractor is useful beyond one API response. At sca
 - Use per-domain throttles to avoid wasteful retries against blocked domains.
 - Use `content_hash` to skip expensive downstream reprocessing when content has not changed.
 
-### Reliability
+Reliability:
 
 - Every URL must end in a terminal state: `success`, `invalid`, `blocked`, `timeout`, or `dead_letter`.
 - Use retry topic with exponential backoff for transient errors.
@@ -734,7 +675,7 @@ This is why the Part 1 topic extractor is useful beyond one API response. At sca
 - Make workers idempotent by using `job_id + normalized_url + attempt`.
 - Use schema validation at every topic boundary.
 
-### Performance
+Performance:
 
 - Partition queue messages by domain or URL hash.
 - Use async HTTP fetching inside workers.
@@ -743,7 +684,7 @@ This is why the Part 1 topic extractor is useful beyond one API response. At sca
 - Keep raw HTML out of hot query path.
 - Use BigQuery partitioning and clustering for large metadata queries.
 
-### Scale
+Scale:
 
 - Billions of URLs are split into independent crawl tasks.
 - Queue backlog absorbs spikes.
@@ -752,9 +693,7 @@ This is why the Part 1 topic extractor is useful beyond one API response. At sca
 - Batch jobs aggregate results after crawl completion.
 - Monitoring tracks lag, throughput, and failure rate by domain.
 
-## SLOs and SLAs
-
-Candidate SLOs:
+### SLOs and SLAs
 
 | Area | SLO |
 |---|---|
@@ -772,7 +711,7 @@ External SLA expectation:
 - It should not promise full crawl success for every external URL, because target sites can block, rate limit, remove, or change content.
 - Instead, the SLA should guarantee accurate accounting of every URL outcome.
 
-## Monitoring Metrics and Tools
+### Monitoring Metrics and Tools
 
 GCP tools:
 
@@ -800,26 +739,22 @@ Key metrics:
 | Duplicate rate by `content_hash` | Content quality and dedupe opportunity |
 | Budget burn rate | Cost guardrail |
 
-## Proof of Concept Plan
+## Proof of Concept and Release Plan
 
-POC goal:
+### POC Scope
 
 ```text
+Goal:
 Demonstrate an end-to-end scaled version of the Part 1 crawler using a small domain/month batch.
+
+Input:
+10k-100k URLs from one text file and one MySQL table.
+
+Pipeline:
+Producer -> queue -> crawler workers -> Cloud Storage + BigQuery -> top-N aggregation -> dashboard.
 ```
 
-POC scope:
-
-```text
-Input: 10k-100k URLs from one text file and one MySQL table.
-Queue: Kafka topic or Pub/Sub topic with one URL per message.
-Workers: Cloud Run crawler workers using Part 1 code.
-Storage: Cloud Storage raw zone + BigQuery metadata tables.
-Analytics: Top-N topic aggregation by domain/month.
-Monitoring: Dashboard for progress, failures, latency, backlog.
-```
-
-Evaluation criteria:
+### POC Evaluation Criteria
 
 - At least `95%` of valid, reachable URLs produce metadata records.
 - `100%` of accepted URLs have a terminal state.
@@ -828,7 +763,7 @@ Evaluation criteria:
 - System can be rerun for the same input without corrupting data.
 - Retry and dead-letter behavior is demonstrated.
 
-## Known vs Non-Trivial Work
+### Known vs Non-Trivial Work
 
 Known/trivial:
 
@@ -851,7 +786,7 @@ Non-trivial:
 | Topic quality improvement | Needs stop words, taxonomy, evaluation data | 2-5 days |
 | Schema evolution and backfills | Requires compatibility and governance | 1-3 days |
 
-Potential blockers:
+### Potential Blockers
 
 - Target sites return `403`, `429`, captcha, or bot-detection pages from cloud IPs.
 - Some pages rely on JavaScript rendering.
@@ -860,7 +795,7 @@ Potential blockers:
 - MySQL source extraction can become slow without pagination/chunking.
 - Topic quality can be noisy for e-commerce pages with navigation-heavy HTML.
 
-## Implementation Schedule
+### Implementation Schedule
 
 | Phase | Deliverable | Estimate |
 |---|---|---:|
@@ -881,7 +816,7 @@ Total POC estimate:
 7-12 engineering days depending on whether Kafka/Dataproc already exists and whether JS rendering is in scope.
 ```
 
-## Release Plan
+### Release Plan
 
 Pre-release:
 
