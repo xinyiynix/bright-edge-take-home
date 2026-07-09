@@ -37,6 +37,42 @@ Topic Scoring Model:
 
 
 
+## Table of Contents
+
+- [Overview](#overview)
+- [What This Crawler Does](#what-this-crawler-does)
+- [Input and Output](#input-and-output)
+  - [Input](#input)
+  - [Output](#output)
+- [Technical Stack](#technical-stack)
+  - [Backend](#backend)
+  - [Frontend](#frontend)
+  - [Deployment](#deployment)
+- [Code Structure](#code-structure)
+- [Data Schema and Transformation Flow](#data-schema-and-transformation-flow)
+  - [Step 1: API input as `CrawlRequest`](#step-1-api-input-as-crawlrequest)
+  - [Step 2: Raw fetch result from `fetch_html(url)`](#step-2-raw-fetch-result-from-fetch_htmlurl)
+  - [Step 3: Parsed intermediate state as `ParsedPage`](#step-3-parsed-intermediate-state-as-parsedpage)
+  - [Step 4: Derived features](#step-4-derived-features)
+  - [Step 5: Final API output as `CrawlResponse`](#step-5-final-api-output-as-crawlresponse)
+  - [Topic scoring strategy](#topic-scoring-strategy)
+- [Topic Extraction Approach](#topic-extraction-approach)
+- [Page Classification](#page-classification)
+- [Running Locally](#running-locally)
+- [Testing](#testing)
+- [Sample Outputs](#sample-outputs)
+- [Deployment Summary](#deployment-summary)
+- [Deployment Validation Commands](#deployment-validation-commands)
+- [Cloud Run Architecture and Resource Tradeoffs](#cloud-run-architecture-and-resource-tradeoffs)
+  - [What CPU and memory mean here](#what-cpu-and-memory-mean-here)
+  - [Why Cloud Run for Part 1](#why-cloud-run-for-part-1)
+  - [How many users can this demo support?](#how-many-users-can-this-demo-support)
+  - [What happens if multiple users use it at once?](#what-happens-if-multiple-users-use-it-at-once)
+  - [What would I change for more scale?](#what-would-i-change-for-more-scale)
+  - [Cost Estimate](#cost-estimate)
+- [References](#references)
+- [Known Limitations](#known-limitations)
+
 ## Overview
 
 This repository contains Part 1 of the BrightEdge Engineering Developer Candidate Assignment. It implements a core URL metadata crawler that accepts a URL, fetches the HTML page, extracts page metadata, classifies the page, and returns relevant topics.
@@ -365,60 +401,6 @@ normalized_score("google") = raw_score("google") / max_raw_score_on_this_page
 The highest-scoring topic on each page receives `1.0`. Other scores are relative to that top topic. These scores are not probabilities; they are normalized relevance scores within one page.
 
 I chose this lexical baseline because it is cheap, explainable, deterministic, and easy to test. A production system could later add semantic embeddings or LLM enrichment for pages where lexical signals are not enough.
-
-### Connection to distributed systems coursework
-
-The topic extraction logic intentionally starts with a simple distributed-systems-friendly pattern:
-
-```text
-tokenize text
-  -> count terms
-  -> generate bigrams
-  -> apply weights
-  -> keep top-N topics
-```
-
-This is similar to a classic Hadoop/MapReduce word-count and top-N pipeline:
-
-```text
-map:    emit(term, weighted_count)
-reduce: aggregate counts per term
-rank:   keep top-N terms per URL or per domain
-```
-
-In this Part 1 service, that logic runs inside a single API request for one URL. In the Part 2 scale design, the same idea can be distributed:
-
-```text
-monthly URL input file / MySQL URL table
-  -> producer splits URLs into crawl tasks
-  -> message queue topic stores one URL per message
-  -> crawler workers fetch and parse pages
-  -> parsed page records are stored
-  -> batch/stream processing computes topic aggregates and top-N views
-```
-
-This mirrors the same producer-consumer pattern I used in earlier cloud infrastructure work: upstream components produce structured messages, queues decouple producers from consumers, and downstream workers process messages independently. For this assignment, the message payload would be a crawl task such as:
-
-```json
-{
-  "job_id": "amazon-2026-07",
-  "url": "https://www.amazon.com/...",
-  "domain": "amazon.com",
-  "crawl_month": "2026-07",
-  "priority": "normal",
-  "attempt": 0
-}
-```
-
-The output of each worker would be a normalized `CrawlResponse`-like record, plus operational fields such as retry count, crawl status, error type, and content hash.
-
-For very large input, I would separate per-URL metadata extraction from aggregate analytics:
-
-- Online/API path: one URL in, one structured metadata record out.
-- Queue/worker path: billions of URL messages processed independently.
-- Batch analytics path: Hadoop/Spark/Dataflow computes domain-level topic distributions, top-N topics, duplicate content groups, and monthly crawl summaries.
-
-HDFS is a reasonable mental model for the raw and intermediate data lake: raw HTML snapshots, parsed page records, and reducer outputs can be stored as partitioned files. On GCP, I would map that design to Cloud Storage as the data lake and BigQuery for queryable metadata, while still keeping the same MapReduce-style transformation pattern.
 
 ## Topic Extraction Approach
 
@@ -807,6 +789,3 @@ Blocked URLs should be tracked separately in a production crawler, including URL
 
 
 https://brightedge-crawler-pzv2s4qwdq-uc.a.run.app/
-
-
-
