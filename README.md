@@ -21,6 +21,21 @@ Pricing estimation:
 
 <img width="1845" height="861" alt="image" src="https://github.com/user-attachments/assets/77da40a2-74ef-49d1-af80-853048eabdf8" />
 
+Data flow:
+
+<img width="1541" height="582" alt="image" src="https://github.com/user-attachments/assets/173970ef-e8e6-457e-a79e-84c11c3480e0" />
+
+Data fields:
+
+<img width="1897" height="826" alt="image" src="https://github.com/user-attachments/assets/8ddcbe26-ca52-4fe5-a6cf-aea87fb78228" />
+
+Topic Scoring Model:
+
+<img width="1434" height="791" alt="image" src="https://github.com/user-attachments/assets/4c597834-a25b-4020-8940-6c5782322b01" />
+
+
+
+
 
 ## Overview
 
@@ -350,6 +365,60 @@ normalized_score("google") = raw_score("google") / max_raw_score_on_this_page
 The highest-scoring topic on each page receives `1.0`. Other scores are relative to that top topic. These scores are not probabilities; they are normalized relevance scores within one page.
 
 I chose this lexical baseline because it is cheap, explainable, deterministic, and easy to test. A production system could later add semantic embeddings or LLM enrichment for pages where lexical signals are not enough.
+
+### Connection to distributed systems coursework
+
+The topic extraction logic intentionally starts with a simple distributed-systems-friendly pattern:
+
+```text
+tokenize text
+  -> count terms
+  -> generate bigrams
+  -> apply weights
+  -> keep top-N topics
+```
+
+This is similar to a classic Hadoop/MapReduce word-count and top-N pipeline:
+
+```text
+map:    emit(term, weighted_count)
+reduce: aggregate counts per term
+rank:   keep top-N terms per URL or per domain
+```
+
+In this Part 1 service, that logic runs inside a single API request for one URL. In the Part 2 scale design, the same idea can be distributed:
+
+```text
+monthly URL input file / MySQL URL table
+  -> producer splits URLs into crawl tasks
+  -> message queue topic stores one URL per message
+  -> crawler workers fetch and parse pages
+  -> parsed page records are stored
+  -> batch/stream processing computes topic aggregates and top-N views
+```
+
+This mirrors the same producer-consumer pattern I used in earlier cloud infrastructure work: upstream components produce structured messages, queues decouple producers from consumers, and downstream workers process messages independently. For this assignment, the message payload would be a crawl task such as:
+
+```json
+{
+  "job_id": "amazon-2026-07",
+  "url": "https://www.amazon.com/...",
+  "domain": "amazon.com",
+  "crawl_month": "2026-07",
+  "priority": "normal",
+  "attempt": 0
+}
+```
+
+The output of each worker would be a normalized `CrawlResponse`-like record, plus operational fields such as retry count, crawl status, error type, and content hash.
+
+For very large input, I would separate per-URL metadata extraction from aggregate analytics:
+
+- Online/API path: one URL in, one structured metadata record out.
+- Queue/worker path: billions of URL messages processed independently.
+- Batch analytics path: Hadoop/Spark/Dataflow computes domain-level topic distributions, top-N topics, duplicate content groups, and monthly crawl summaries.
+
+HDFS is a reasonable mental model for the raw and intermediate data lake: raw HTML snapshots, parsed page records, and reducer outputs can be stored as partitioned files. On GCP, I would map that design to Cloud Storage as the data lake and BigQuery for queryable metadata, while still keeping the same MapReduce-style transformation pattern.
 
 ## Topic Extraction Approach
 
@@ -738,7 +807,6 @@ Blocked URLs should be tracked separately in a production crawler, including URL
 
 
 https://brightedge-crawler-pzv2s4qwdq-uc.a.run.app/
-
 
 
 
